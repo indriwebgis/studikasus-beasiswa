@@ -393,7 +393,7 @@ def page_upload_and_clean():
         return
 
     st.success(f"Data aktif: {source}")
-    st.write("**Skema kolom yang diharapkan (sesuai notebook):**")
+    st.write("**Skema kolom:**")
     st.code(_expected_columns_text(), language="text")
 
     st.subheader("Preview data (raw)")
@@ -660,7 +660,7 @@ def page_compare_and_best():
 
 
 def page_prediction():
-    st.header("5) Prediksi (opsional)")
+    st.markdown('<div class="page-title">\U0001F52E 5) Prediksi</div>', unsafe_allow_html=True)
 
     best: Optional[EvalResult] = st.session_state.get("best_result")
     df: Optional[pd.DataFrame] = st.session_state.get("clean_df")
@@ -759,15 +759,14 @@ def main():
             "2) EDA",
             "3) Menjalankan Model",
             "4) Bandingkan Metrik & Model Terbaik",
-            "5) Prediksi (opsional)",
+            "5) Prediksi",
         ]
         choice = st.radio("Pilih tahapan", pages, index=0)
         st.divider()
         st.subheader("Catatan")
         st.write(
             "- Jika tidak upload data, aktifkan **Gunakan data contoh**.\n"
-            "- Pastikan kolom fitur sesuai skema notebook.\n"
-            "- XGBoost akan muncul jika library tersedia."
+            "- Pastikan kolom fitur sesuai dengan skema yang telah ditentukan.\n"
         )
 
     if choice.startswith("1"):
