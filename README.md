@@ -10,6 +10,24 @@ Aplikasi ini membungkus notebook **Sistem Seleksi Beasiswa dengan Machine Learni
 
 > Jika pengguna tidak mengunggah data baru, aplikasi menyediakan opsi memakai **data contoh** `beasiswa.csv`.
 
+## Skema data (6 kolom)
+Aplikasi ini menggunakan **5 fitur + 1 target** (total 6 kolom):
+
+- `IPK`
+- `Pendapatan_Orang_Tua`
+- `Prestasi_Akademik`
+- `Prestasi_Non_Akademik`
+- `Keikutsertaan_Organisasi`
+- `Diterima_Beasiswa` (target, 0/1)
+
+Data contoh `beasiswa.csv` di repo ini sudah mengikuti skema 6 kolom tersebut.
+
+## Model
+Model yang digunakan:
+
+- Logistic Regression
+- XGBoost
+
 ## Struktur
 - `app.py` : aplikasi Streamlit
 - `requirements.txt` : dependensi

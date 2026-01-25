@@ -13,7 +13,6 @@ from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -38,17 +37,12 @@ NUMERIC_COLS: List[str] = [
     "IPK",
     "Pendapatan_Orang_Tua",
     "Keikutsertaan_Organisasi",
-    "Pengalaman_Sosial",
     "Prestasi_Akademik",
     "Prestasi_Non_Akademik",
 ]
 
-CATEGORICAL_COLS: List[str] = [
-    "Asal_Sekolah",
-    "Lokasi_Domisili",
-    "Gender",
-    "Status_Disabilitas",
-]
+# Versi tugas ini hanya menggunakan fitur numerik (tanpa kolom kategorikal)
+CATEGORICAL_COLS: List[str] = []
 
 DEFAULT_TARGET = "Diterima_Beasiswa"
 
@@ -85,11 +79,12 @@ def _read_uploaded(file) -> pd.DataFrame:
 
 
 def _expected_columns_text() -> str:
+    cat_text = ", ".join(CATEGORICAL_COLS) if CATEGORICAL_COLS else "(tidak ada)"
     return (
         "Fitur numerik: "
         + ", ".join(NUMERIC_COLS)
         + "\n\nFitur kategorikal: "
-        + ", ".join(CATEGORICAL_COLS)
+        + cat_text
         + f"\n\nLabel/target (untuk training): {DEFAULT_TARGET} (0/1)"
     )
 
@@ -260,13 +255,13 @@ def build_preprocessor(numeric_cols: List[str], categorical_cols: List[str]) -> 
             ("onehot", OneHotEncoder(handle_unknown="ignore")),
         ]
     )
-    return ColumnTransformer(
-        transformers=[
-            ("num", numeric_transformer, numeric_cols),
-            ("cat", categorical_transformer, categorical_cols),
-        ],
-        remainder="drop",
-    )
+    transformers = []
+    if numeric_cols:
+        transformers.append(("num", numeric_transformer, numeric_cols))
+    if categorical_cols:
+        transformers.append(("cat", categorical_transformer, categorical_cols))
+
+    return ColumnTransformer(transformers=transformers, remainder="drop")
 
 
 def get_model_candidates(random_state: int, class_weight_balanced: bool) -> Dict[str, Pipeline]:
@@ -278,16 +273,8 @@ def get_model_candidates(random_state: int, class_weight_balanced: bool) -> Dict
         n_jobs=None,
     )
 
-    rf = RandomForestClassifier(
-        n_estimators=300,
-        random_state=random_state,
-        n_jobs=-1,
-        class_weight=("balanced" if class_weight_balanced else None),
-    )
-
     candidates: Dict[str, Pipeline] = {
         "Logistic Regression": Pipeline(steps=[("preprocess", preprocessor), ("model", lr)]),
-        "Random Forest": Pipeline(steps=[("preprocess", preprocessor), ("model", rf)]),
     }
 
     if HAS_XGBOOST:
@@ -1061,46 +1048,11 @@ def get_schema_data() -> pd.DataFrame:
             "Satuan/Format": "juta rupiah/bulan",
         },
         {
-            "Kolom": "Asal_Sekolah",
-            "Tipe": "Kategori",
-            "Deskripsi": "Gabungan status sekolah & lokasi sekolah",
-            "Rentang/Domain": "Negeri-Kota / Negeri-Desa / Swasta-Kota / Swasta-Desa",
-            "Satuan/Format": "teks",
-        },
-        {
-            "Kolom": "Lokasi_Domisili",
-            "Tipe": "Kategori",
-            "Deskripsi": "Kabupaten/Kota domisili (simulasi)",
-            "Rentang/Domain": "50 kategori Kab/Kota",
-            "Satuan/Format": "teks",
-        },
-        {
             "Kolom": "Keikutsertaan_Organisasi",
             "Tipe": "Numerik (int)",
             "Deskripsi": "Jumlah organisasi aktif",
             "Rentang/Domain": "0–8",
             "Satuan/Format": "jumlah organisasi",
-        },
-        {
-            "Kolom": "Pengalaman_Sosial",
-            "Tipe": "Numerik (int)",
-            "Deskripsi": "Total jam kegiatan sosial/relawan",
-            "Rentang/Domain": "0–400",
-            "Satuan/Format": "jam",
-        },
-        {
-            "Kolom": "Gender",
-            "Tipe": "Kategori",
-            "Deskripsi": "Jenis kelamin",
-            "Rentang/Domain": "L / P",
-            "Satuan/Format": "teks",
-        },
-        {
-            "Kolom": "Status_Disabilitas",
-            "Tipe": "Kategori",
-            "Deskripsi": "Status disabilitas",
-            "Rentang/Domain": "Ya / Tidak",
-            "Satuan/Format": "teks",
         },
         {
             "Kolom": "Prestasi_Akademik",
@@ -1198,6 +1150,16 @@ def page_upload_and_clean():
             drop_rows_missing_target=drop_missing_target,
             numeric_impute=numeric_impute,
         )
+
+        # Batasi kolom agar seluruh proses hanya memakai 6 kolom:
+        # 5 fitur + 1 target (jika ada di dataset)
+        keep_cols: List[str] = []
+        for c in (NUMERIC_COLS + CATEGORICAL_COLS + [target_col]):
+            if c and (c in clean_df.columns) and (c not in keep_cols):
+                keep_cols.append(c)
+        if keep_cols:
+            clean_df = clean_df[keep_cols].copy()
+
         st.session_state["raw_df"] = df
         st.session_state["clean_df"] = clean_df
         st.session_state["clean_log"] = log
@@ -1388,12 +1350,10 @@ def page_modeling():
         st.caption("Note : Mengaktifkan pembobotan kelas otomatis untuk menangani data imbalanced")
 
     st.markdown("**Pilih model yang akan dijalankan :**")
-    mc1, mc2, mc3 = st.columns(3)
+    mc1, mc2 = st.columns(2)
     with mc1:
         use_lr = st.checkbox("Logistic Regression", value=True)
     with mc2:
-        use_rf = st.checkbox("Random Forest", value=True)
-    with mc3:
         use_xgb = st.checkbox(
             "XGBoost",
             value=bool(HAS_XGBOOST),
@@ -1403,8 +1363,6 @@ def page_modeling():
     selected_models: List[str] = []
     if use_lr:
         selected_models.append("Logistic Regression")
-    if use_rf:
-        selected_models.append("Random Forest")
     if use_xgb and HAS_XGBOOST:
         selected_models.append("XGBoost")
 
@@ -1781,12 +1739,8 @@ def page_prediction():
             "IPK": ("IPK", "Skala 0 - 4"),
             "Pendapatan_Orang_Tua": ("Pendapatan Orang Tua", "Juta/Bulan"),
             "Keikutsertaan_Organisasi": ("Keikutsertaan Organisasi", "Jumlah, Skala 0-10"),
-            "Pengalaman_Sosial": ("Pengalaman Sosial", "Jam, Skala 0-400"),
             "Prestasi_Akademik": ("Prestasi Akademik", "Jumlah, Skala 0-10"),
             "Prestasi_Non_Akademik": ("Prestasi Non Akademik", "Jumlah, Skala 0-10"),
-            "Asal_Sekolah": "Asal Sekolah",
-            "Lokasi_Domisili": "Lokasi Domisili",
-            "Status_Disabilitas": "Status Disabilitas",
         }
         vals_num = {}
         for c in NUMERIC_COLS:
@@ -1933,6 +1887,178 @@ def page_prediction():
                 )
         st.markdown('<div style="height:0.6rem"></div>', unsafe_allow_html=True)
 
+        # Analisis tambahan (ringkas)
+        st.markdown("### Resume Analisis Prediksi Batch")
+        accept_rate = (diterima_n / total_n) if total_n else 0.0
+        st.caption(f"Acceptance rate (prediksi diterima) = {accept_rate * 100:.2f}%")
+
+        present_numeric = [c for c in NUMERIC_COLS if c in out.columns]
+        if present_numeric:
+            summary_rows: List[Dict[str, Any]] = []
+            for label, mask in [("Diterima (1)", out["Prediksi_Label"] == 1), ("Ditolak (0)", out["Prediksi_Label"] == 0)]:
+                part = out.loc[mask, present_numeric].copy()
+                row: Dict[str, Any] = {"Kelompok": label, "Jumlah": int(mask.sum())}
+                for c in present_numeric:
+                    row[f"Rata-rata {c}"] = float(pd.to_numeric(part[c], errors="coerce").mean()) if len(part) else np.nan
+                summary_rows.append(row)
+
+            summary_df = pd.DataFrame(summary_rows)
+            fmt = {k: "{:.3f}" for k in summary_df.columns if k.startswith("Rata-rata ")}
+            st.markdown("**Rata-rata fitur untuk prediksi diterima vs ditolak**")
+            st.dataframe(summary_df.style.format(fmt), use_container_width=True)
+
+            # Highlight sesuai permintaan
+            if diterima_n:
+                ipk_mean = float(pd.to_numeric(out.loc[out["Prediksi_Label"] == 1, "IPK"], errors="coerce").mean()) if "IPK" in out.columns else np.nan
+                income_mean = float(pd.to_numeric(out.loc[out["Prediksi_Label"] == 1, "Pendapatan_Orang_Tua"], errors="coerce").mean()) if "Pendapatan_Orang_Tua" in out.columns else np.nan
+                highlight_parts: List[str] = []
+                if not np.isnan(ipk_mean):
+                    highlight_parts.append(f"Rata-rata IPK (prediksi diterima) = {ipk_mean:.3f}")
+                if not np.isnan(income_mean):
+                    highlight_parts.append(f"Rata-rata Pendapatan_Orang_Tua (prediksi diterima) = {income_mean:.3f}")
+                if highlight_parts:
+                    st.info(" | ".join(highlight_parts))
+
+        has_proba = ("Prob_Diterima" in out.columns) and ("Prob_Ditolak" in out.columns)
+        if has_proba:
+            proba_acc = float(out.loc[out["Prediksi_Label"] == 1, "Prob_Diterima"].mean()) if diterima_n else np.nan
+            proba_rej = float(out.loc[out["Prediksi_Label"] == 0, "Prob_Diterima"].mean()) if ditolak_n else np.nan
+            msg = []
+            if not np.isnan(proba_acc):
+                msg.append(f"Rata-rata Prob_Diterima (prediksi diterima) = {proba_acc:.4f}")
+            if not np.isnan(proba_rej):
+                msg.append(f"Rata-rata Prob_Diterima (prediksi ditolak) = {proba_rej:.4f}")
+            if msg:
+                st.caption("; ".join(msg))
+
+            st.markdown("**Top Kandidat Paling Potensial**")
+            top_n = st.slider("Jumlah kandidat yang ditampilkan", 5, 50, 10, 1, key="top_n_candidates")
+            top_cols = [c for c in ["Prediksi_Label", "Prob_Diterima"] if c in out.columns]
+            top_cols += [c for c in (NUMERIC_COLS + CATEGORICAL_COLS) if c in out.columns]
+            top_df = out.sort_values("Prob_Diterima", ascending=False)[top_cols].head(int(top_n)).copy()
+            st.dataframe(top_df.style.format({"Prob_Diterima": "{:.6f}"}), use_container_width=True)
+        else:
+            # Fallback jika model tidak menyediakan probabilitas
+            if diterima_n:
+                st.markdown("**Top Kandidat (Fallback: Prediksi diterima dahulu)**")
+                top_n = st.slider("Jumlah kandidat yang ditampilkan", 5, 50, 10, 1, key="top_n_candidates_no_proba")
+                top_cols = [c for c in ["Prediksi_Label"] if c in out.columns]
+                top_cols += [c for c in (NUMERIC_COLS + CATEGORICAL_COLS) if c in out.columns]
+                top_df = out.loc[out["Prediksi_Label"] == 1, top_cols].head(int(top_n)).copy()
+                st.dataframe(top_df, use_container_width=True)
+
+        # Bobot/importance fitur dari model terbaik
+        try:
+            model = getattr(best.fitted, "named_steps", {}).get("model", None)
+            feature_names = [c for c in (NUMERIC_COLS + CATEGORICAL_COLS) if c in out.columns]
+            importance_values = None
+            importance_kind = None
+
+            if model is not None and hasattr(model, "coef_"):
+                coef = np.asarray(getattr(model, "coef_"))
+                if coef.ndim == 2 and coef.shape[0] >= 1:
+                    importance_values = np.abs(coef[0]).ravel()
+                    importance_kind = "|Koefisien| (Logistic Regression)"
+            elif model is not None and hasattr(model, "feature_importances_"):
+                importance_values = np.asarray(getattr(model, "feature_importances_"), dtype=float).ravel()
+                importance_kind = "Feature Importance (XGBoost)"
+
+            if importance_values is not None and feature_names and (len(importance_values) == len(feature_names)):
+                imp_df = pd.DataFrame({"Fitur": feature_names, "Bobot": importance_values}).sort_values("Bobot", ascending=False)
+                total_imp = float(imp_df["Bobot"].sum())
+                imp_df["Kontribusi_%"] = (imp_df["Bobot"] / total_imp * 100.0) if total_imp > 0 else 0.0
+                top_feat = str(imp_df.iloc[0]["Fitur"]) if len(imp_df) else "-"
+                st.markdown(f"**Fitur dengan bobot tertinggi:** {top_feat} ({importance_kind})")
+                st.dataframe(imp_df.style.format({"Bobot": "{:.6f}", "Kontribusi_%": "{:.2f}"}), use_container_width=True)
+            else:
+                st.caption("Bobot/importance fitur tidak tersedia atau tidak bisa dipetakan ke nama kolom.")
+        except Exception:
+            st.caption("Tidak dapat menghitung bobot/importance fitur pada prediksi batch ini.")
+
+        # Analisis lanjutan: pembeda fitur & distribusi
+        with st.expander("Analisis Lanjutan", expanded=False):
+            mask_acc = out["Prediksi_Label"] == 1
+            mask_rej = out["Prediksi_Label"] == 0
+
+            if present_numeric:
+                # Tabel fitur paling membedakan (selisih mean + effect size sederhana)
+                rows: List[Dict[str, Any]] = []
+                for c in present_numeric:
+                    s_acc = pd.to_numeric(out.loc[mask_acc, c], errors="coerce")
+                    s_rej = pd.to_numeric(out.loc[mask_rej, c], errors="coerce")
+
+                    m_acc = float(s_acc.mean()) if s_acc.notna().any() else np.nan
+                    m_rej = float(s_rej.mean()) if s_rej.notna().any() else np.nan
+                    diff = (m_acc - m_rej) if (not np.isnan(m_acc) and not np.isnan(m_rej)) else np.nan
+
+                    std_acc = float(s_acc.std(ddof=0)) if s_acc.notna().any() else np.nan
+                    std_rej = float(s_rej.std(ddof=0)) if s_rej.notna().any() else np.nan
+                    pooled = np.sqrt((std_acc ** 2 + std_rej ** 2) / 2.0) if (not np.isnan(std_acc) and not np.isnan(std_rej)) else np.nan
+                    effect = (diff / pooled) if (pooled and not np.isnan(diff) and pooled > 0) else np.nan
+
+                    rows.append(
+                        {
+                            "Fitur": c,
+                            "Mean Diterima": m_acc,
+                            "Mean Ditolak": m_rej,
+                            "Selisih Mean": diff,
+                            "Effect Size": effect,
+                        }
+                    )
+
+                diff_df = pd.DataFrame(rows)
+                if not diff_df.empty:
+                    diff_df["|Selisih|" ] = diff_df["Selisih Mean"].abs()
+                    diff_df = diff_df.sort_values("|Selisih|", ascending=False).drop(columns=["|Selisih|"])
+                    st.markdown("**Fitur paling membedakan (berdasarkan selisih rata-rata)**")
+                    st.dataframe(
+                        diff_df.style.format(
+                            {
+                                "Mean Diterima": "{:.3f}",
+                                "Mean Ditolak": "{:.3f}",
+                                "Selisih Mean": "{:.3f}",
+                                "Effect Size": "{:.3f}",
+                            }
+                        ),
+                        use_container_width=True,
+                    )
+
+            # Kuartil untuk IPK & Pendapatan (khusus prediksi diterima)
+            q_targets = [c for c in ["IPK", "Pendapatan_Orang_Tua"] if c in out.columns]
+            if q_targets and int(mask_acc.sum()) > 0:
+                q_rows: List[Dict[str, Any]] = []
+                for c in q_targets:
+                    s = pd.to_numeric(out.loc[mask_acc, c], errors="coerce").dropna()
+                    if len(s):
+                        q = s.quantile([0.25, 0.5, 0.75])
+                        q_rows.append(
+                            {
+                                "Fitur": c,
+                                "Q1 (25%)": float(q.loc[0.25]),
+                                "Median (50%)": float(q.loc[0.5]),
+                                "Q3 (75%)": float(q.loc[0.75]),
+                                "Min": float(s.min()),
+                                "Max": float(s.max()),
+                            }
+                        )
+                if q_rows:
+                    q_df = pd.DataFrame(q_rows)
+                    st.markdown("**Ringkasan kuartil (prediksi diterima)**")
+                    st.dataframe(q_df.style.format({"Q1 (25%)": "{:.3f}", "Median (50%)": "{:.3f}", "Q3 (75%)": "{:.3f}", "Min": "{:.3f}", "Max": "{:.3f}"}), use_container_width=True)
+
+            # Analisis probabilitas (jika tersedia)
+            if has_proba:
+                st.markdown("**Sebaran Probabilitas Diterima**")
+                ths = [0.6, 0.7, 0.8]
+                counts = []
+                for t in ths:
+                    counts.append({"Ambang": t, "Jumlah (Prob_Diterima ≥ ambang)": int((out["Prob_Diterima"] >= t).sum())})
+                st.dataframe(pd.DataFrame(counts), use_container_width=True)
+
+                # Histogram probabilitas
+                bins = st.slider("Bins histogram Prob_Diterima", 5, 60, 25, 1, key="bins_prob")
+                plot_hist(out, "Prob_Diterima", bins=bins)
+
         if ("Prob_Diterima" in out.columns) and has_proba_model:
             st.caption(f"Ambang prediksi diterima (label 1) saat ini: {float(threshold):.2f}")
 
@@ -1989,7 +2115,7 @@ def main():
 
     st.title("Sistem Seleksi Beasiswa dengan Machine Learning")
     st.markdown(
-        '<div class="subtitle">Tugas Pembelajaran Mesin oleh <span class="name-highlight">Indri Puspita Sari</span> dan <span class="name-highlight">Landi Ruslandi</span></div>',
+        '<div class="subtitle">UAS Pembelajaran Mesin oleh <span class="name-highlight">Indri Puspita Sari</span> 072925010</div>',
         unsafe_allow_html=True,
     )
 
